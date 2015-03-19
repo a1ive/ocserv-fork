@@ -1,3 +1,29 @@
+/* === Authentication ===
+ 
+  main                 sec-mod            worker
+   |                      |                  |
+   |                      |  <--AUTH_INIT--- |
+   |                      |  ---AUTH_REP---> |
+   |                      |  <--AUTH_CONT--- |
+   |                      |         .        |
+   |                      |         .        |
+   |                      |         .        |
+   |                      |  ----AUTH_REP--> |
+   |                      |                  |
+   | <----------AUTH_COOKIE_REQ------------- |
+   |                      |                  |
+   | ---SESSION_OPEN----> |                  |
+   | <--SESSION_REPLY---- |                  |
+   |                      |                  |
+   | -----------------AUTH_REP-------------> |
+   |                      |                  |
+   |                      |
+   |                      |            (disconnect)
+   | ---SESSION_CLOSE---> |
+
+ */
+
+
 /*
  * == Auth in main process (cookie auth only) ==
  *
@@ -50,6 +76,7 @@ message auth_reply_msg
 	optional string xml_config_file = 26;
 	optional string ipv4_network = 27;
 	optional string ipv6_network = 28;
+	repeated string no_routes = 29;
 }
 
 /* RESUME_FETCH_REQ + RESUME_DELETE_REQ */
@@ -86,12 +113,15 @@ message cli_stats_msg
 {
 	required uint64 bytes_in = 1;
 	required uint64 bytes_out = 2;
+	optional bytes sid = 3; /* only required by sec-mod */
+	required uint32 uptime = 4; /* sec-mod */
 }
 
 /* UDP_FD */
 message udp_fd_msg
 {
 	required bool hello = 1 [default = true]; /* is that a client hello? */
+	optional bytes data = 2; /* the client hello data */
 }
 
 /* SESSION_INFO */
@@ -100,6 +130,8 @@ message session_info_msg
 	required string tls_ciphersuite = 1;
 	required string dtls_ciphersuite = 2;
 	required string user_agent = 3;
+	optional string cstp_compr = 4;
+	optional string dtls_compr = 5;
 }
 
 
@@ -180,16 +212,43 @@ message cookie
  *
  *   main                           sec-mod
  * SESSION_OPEN/CLOSE   ------>
- *
+ *                      <------     SESSION_REPLY
  */
 
 /* SEC_SESSION_CLOSE */
 message sec_auth_session_msg
 {
 	required bytes sid = 1;
+	/* on open */
+	optional bytes cookie = 2;
+	/* on close */
+	optional uint32 uptime = 3;
+	optional uint64 bytes_in = 4;
+	optional uint64 bytes_out = 5;
 }
 
 message sec_auth_session_reply_msg
 {
 	required AUTH_REP reply = 1;
+
+	/* sup - config */
+	optional bool no_udp = 10;
+	optional bool deny_roaming = 11;
+	optional bool require_cert = 12;
+	repeated string routes = 13;
+	repeated string iroutes = 14;
+	repeated string dns = 15;
+	repeated string nbns = 16;
+	optional string ipv4_net = 17;
+	optional string ipv4_netmask = 18;
+	optional string ipv6_net = 19;
+	optional uint32 ipv6_prefix = 20;
+	optional string cgroup = 21;
+	optional string xml_config_file = 22;
+	optional uint32 rx_per_sec = 23;
+	optional uint32 tx_per_sec = 24;
+	optional uint32 net_priority = 25;
+	optional string explicit_ipv4 = 26;
+	optional string explicit_ipv6 = 27;
+	repeated string no_routes = 28;
 }

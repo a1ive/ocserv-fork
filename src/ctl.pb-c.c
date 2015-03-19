@@ -420,7 +420,7 @@ const ProtobufCMessageDescriptor bool_msg__descriptor =
   (ProtobufCMessageInit) bool_msg__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
-static const ProtobufCFieldDescriptor user_info_rep__field_descriptors[21] =
+static const ProtobufCFieldDescriptor user_info_rep__field_descriptors[25] =
 {
   {
     "id",
@@ -674,11 +674,61 @@ static const ProtobufCFieldDescriptor user_info_rep__field_descriptors[21] =
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "mtu",
+    22,
+    PROTOBUF_C_LABEL_OPTIONAL,
+    PROTOBUF_C_TYPE_UINT32,
+    offsetof(UserInfoRep, has_mtu),
+    offsetof(UserInfoRep, mtu),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "cstp_compr",
+    23,
+    PROTOBUF_C_LABEL_OPTIONAL,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(UserInfoRep, cstp_compr),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "dtls_compr",
+    24,
+    PROTOBUF_C_LABEL_OPTIONAL,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(UserInfoRep, dtls_compr),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "no_routes",
+    25,
+    PROTOBUF_C_LABEL_REPEATED,
+    PROTOBUF_C_TYPE_STRING,
+    offsetof(UserInfoRep, n_no_routes),
+    offsetof(UserInfoRep, no_routes),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned user_info_rep__field_indices_by_name[] = {
   9,   /* field[9] = conn_time */
+  22,   /* field[22] = cstp_compr */
   17,   /* field[17] = dns */
   14,   /* field[14] = dtls_ciphersuite */
+  23,   /* field[23] = dtls_compr */
   2,   /* field[2] = groupname */
   10,   /* field[10] = hostname */
   0,   /* field[0] = id */
@@ -686,7 +736,9 @@ static const unsigned user_info_rep__field_indices_by_name[] = {
   20,   /* field[20] = iroutes */
   6,   /* field[6] = local_ip */
   8,   /* field[8] = local_ip6 */
+  21,   /* field[21] = mtu */
   18,   /* field[18] = nbns */
+  24,   /* field[24] = no_routes */
   5,   /* field[5] = remote_ip */
   7,   /* field[7] = remote_ip6 */
   19,   /* field[19] = routes */
@@ -701,7 +753,7 @@ static const unsigned user_info_rep__field_indices_by_name[] = {
 static const ProtobufCIntRange user_info_rep__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 21 }
+  { 0, 25 }
 };
 const ProtobufCMessageDescriptor user_info_rep__descriptor =
 {
@@ -711,7 +763,7 @@ const ProtobufCMessageDescriptor user_info_rep__descriptor =
   "UserInfoRep",
   "",
   sizeof(UserInfoRep),
-  21,
+  25,
   user_info_rep__field_descriptors,
   user_info_rep__field_indices_by_name,
   1,  user_info_rep__number_ranges,

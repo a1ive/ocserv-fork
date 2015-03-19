@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013, 2014 Nikos Mavrogiannopoulos
+ * Copyright (C) 2013-2015 Nikos Mavrogiannopoulos
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -47,11 +47,10 @@
 # include <tcpd.h>
 #endif
 
-#ifdef HAVE_LIBSYSTEMD_DAEMON
+#ifdef HAVE_LIBSYSTEMD
 # include <systemd/sd-daemon.h>
 #endif
 #include <main.h>
-#include <main-sup-config.h>
 #include <main-ctl.h>
 #include <route-add.h>
 #include <worker.h>
@@ -80,7 +79,7 @@ static void add_listener(void *pool, struct listen_list_st *list,
 	tmp->family = family;
 	tmp->sock_type = socktype;
 	tmp->protocol = protocol;
-	
+
 	tmp->addr_len = addr_len;
 	memcpy(&tmp->addr, addr, addr_len);
 
@@ -88,7 +87,7 @@ static void add_listener(void *pool, struct listen_list_st *list,
 	list->total++;
 }
 
-static void set_udp_socket_options(struct cfg_st* config, int fd)
+static void set_udp_socket_options(struct cfg_st* config, int fd, int family)
 {
 int y;
 	if (config->try_mtu) {
@@ -104,6 +103,25 @@ int y;
 			perror("setsockopt(IP_DF) failed");
 #endif
 	}
+#if defined(IP_PKTINFO)
+	y = 1;
+	if (setsockopt(fd, SOL_IP, IP_PKTINFO,
+		       (const void *)&y, sizeof(y)) < 0)
+		perror("setsockopt(IP_PKTINFO) failed");
+#elif defined(IP_RECVDSTADDR) /* *BSD */
+	y = 1;
+	if (setsockopt(fd, IPPROTO_IP, IP_RECVDSTADDR,
+		       (const void *)&y, sizeof(y)) < 0)
+		perror("setsockopt(IP_RECVDSTADDR) failed");
+#endif
+#if defined(IPV6_RECVPKTINFO)
+	if (family == AF_INET6) {
+		y = 1;
+		if (setsockopt(fd, IPPROTO_IPV6, IPV6_RECVPKTINFO,
+			       (const void *)&y, sizeof(y)) < 0)
+			perror("setsockopt(IPV6_RECVPKTINFO) failed");
+	}
+#endif
 }
 
 static void set_common_socket_options(int fd)
@@ -161,7 +179,7 @@ int _listen_ports(void *pool, struct cfg_st* config,
 		}
 
 		if (ptr->ai_socktype == SOCK_DGRAM) {
-			set_udp_socket_options(config, s);
+			set_udp_socket_options(config, s, ptr->ai_family);
 		}
 
 
@@ -180,7 +198,7 @@ int _listen_ports(void *pool, struct cfg_st* config,
 		}
 
 		set_common_socket_options(s);
-		
+
 		add_listener(pool, list, s, ptr->ai_family, ptr->ai_socktype==SOCK_STREAM?SOCK_TYPE_TCP:SOCK_TYPE_UDP,
 			ptr->ai_protocol, ptr->ai_addr, ptr->ai_addrlen);
 
@@ -202,7 +220,7 @@ int _listen_unix_ports(void *pool, struct cfg_st* config,
 	if (config->unix_conn_file) {
 		memset(&sa, 0, sizeof(sa));
 		sa.sun_family = AF_UNIX;
-		snprintf(sa.sun_path, sizeof(sa.sun_path), "%s", config->unix_conn_file);
+		strlcpy(sa.sun_path, config->unix_conn_file, sizeof(sa.sun_path));
 		remove(sa.sun_path);
 
 		if (config->foreground != 0)
@@ -255,12 +273,15 @@ listen_ports(void *pool, struct cfg_st* config,
 {
 	struct addrinfo hints, *res;
 	char portname[6];
-	int ret, fds;
+	int ret;
+#ifdef HAVE_LIBSYSTEMD
+	int fds;
+#endif
 
 	list_head_init(&list->head);
 	list->total = 0;
 
-#ifdef HAVE_LIBSYSTEMD_DAEMON
+#ifdef HAVE_LIBSYSTEMD
 	/* Support for systemd socket-activatable service */
 	if ((fds=sd_listen_fds(0)) > 0) {
 		/* if we get our fds from systemd */
@@ -291,7 +312,7 @@ listen_ports(void *pool, struct cfg_st* config,
 			}
 
 			if (type == SOCK_DGRAM)
-				set_udp_socket_options(config, fd);
+				set_udp_socket_options(config, fd, family);
 
 			/* obtain socket params */
 			tmp_sock_len = sizeof(tmp_sock);
@@ -325,7 +346,7 @@ listen_ports(void *pool, struct cfg_st* config,
 
 		if (config->foreground != 0)
 			fprintf(stderr, "listening on %d systemd sockets...\n", list->total);
-		
+
 		return 0;
 	}
 #endif
@@ -393,66 +414,45 @@ listen_ports(void *pool, struct cfg_st* config,
 		if (ret < 0) {
 			return -1;
 		}
-	
+
 		freeaddrinfo(res);
 	}
 
 	return 0;
 }
 
-/* This is a hack. I tried to use connect() on the worker
- * and use connect() with unspec on the master process but all packets
- * were received by master. Reopening the socket seems to resolve
- * that.
- */
+/* Sets the options needed in the UDP socket we forward to
+ * worker */
 static
-int reopen_udp_port(struct listener_st *l)
+void set_worker_udp_opts(int fd, int family)
 {
-int s, y, e;
+int y;
 
-	close(l->fd);
-	l->fd = -1;
-
-	s = socket(l->family, SOCK_DGRAM, l->protocol);
-	if (s < 0) {
-		perror("socket() failed");
-		return -1;
-	}
-
-#if defined(IPV6_V6ONLY)
-	if (l->family == AF_INET6) {
+#ifdef IPV6_V6ONLY
+	if (family == AF_INET6) {
 		y = 1;
 		/* avoid listen on ipv6 addresses failing
 		 * because already listening on ipv4 addresses: */
-		setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY,
+		setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY,
 			   (const void *) &y, sizeof(y));
 	}
 #endif
 
 	y = 1;
-	setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const void *) &y, sizeof(y));
+	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const void *) &y, sizeof(y));
 
 #if defined(IP_DONTFRAG)
 	y = 1;
-	setsockopt(s, IPPROTO_IP, IP_DONTFRAG,
+	setsockopt(fd, IPPROTO_IP, IP_DONTFRAG,
 		       (const void *) &y, sizeof(y));
 #elif defined(IP_MTU_DISCOVER)
 	y = IP_PMTUDISC_DO;
-	setsockopt(s, IPPROTO_IP, IP_MTU_DISCOVER,
+	setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER,
 		       (const void *) &y, sizeof(y));
 #endif
-	set_cloexec_flag (s, 1);
+	set_cloexec_flag (fd, 1);
 
-	if (bind(s, (void*)&l->addr, l->addr_len) < 0) {
-		e = errno;
-		syslog(LOG_ERR, "bind() failed: %s", strerror(e));
-		close(s);
-		return -1;
-	}
-	
-	l->fd = s;
-
-	return 0;
+	return;
 }
 
 
@@ -464,7 +464,7 @@ struct script_wait_st *stmp = NULL, *spos;
 
 	while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
 		estatus = WEXITSTATUS(status);
-		
+
 		if (pid == s->sec_mod_pid) {
 			mslog(s, NULL, LOG_ERR, "ocserv-secmod died unexpectedly");
 			terminate = 1;
@@ -484,7 +484,7 @@ struct script_wait_st *stmp = NULL, *spos;
 				break;
 			}
 		}
-	
+
 		if (WIFSIGNALED(status)) {
 			if (WTERMSIG(status) == SIGSEGV)
 				mslog(s, NULL, LOG_ERR, "Child %u died with sigsegv\n", (unsigned)pid);
@@ -536,7 +536,7 @@ static void drop_privileges(main_server_st* s)
 			       (int) s->config->gid, strerror(e));
 			exit(1);
 		}
-		
+
 		ret = setgroups(1, &s->config->gid);
 		if (ret < 0) {
 			e = errno;
@@ -611,8 +611,6 @@ void clear_lists(main_server_st *s)
 			close(ctmp->fd);
 		if (ctmp->tun_lease.fd >= 0)
 			close(ctmp->tun_lease.fd);
-		if (ctmp->cookie_ptr)
-			ctmp->cookie_ptr->proc = NULL;
 		list_del(&ctmp->list);
 		safe_memset(ctmp, 0, sizeof(*ctmp));
 		talloc_free(ctmp);
@@ -628,7 +626,6 @@ void clear_lists(main_server_st *s)
 	ip_lease_deinit(&s->ip_leases);
 	proc_table_deinit(s);
 	ctl_handler_deinit(s);
-	cookie_db_deinit(&s->cookies);
 }
 
 static void kill_children(main_server_st* s)
@@ -655,6 +652,7 @@ void request_reload(int signo)
 	reload_conf = 1;
 }
 
+
 /* A UDP fd will not be forwarded to worker process before this number of
  * seconds has passed. That is to prevent a duplicate message messing the worker.
  */
@@ -666,27 +664,31 @@ static int forward_udp_to_owner(main_server_st* s, struct listener_st *listener)
 {
 int ret, e;
 struct sockaddr_storage cli_addr;
+struct sockaddr_storage our_addr;
 struct proc_st *proc_to_send = NULL;
-socklen_t cli_addr_size;
-uint8_t buffer[1024];
+socklen_t cli_addr_size, our_addr_size;
+uint8_t buffer[1536];
 char tbuf[64];
 uint8_t  *session_id = NULL;
 int session_id_size = 0;
 ssize_t buffer_size;
-int connected = 0;
 int match_ip_only = 0;
 time_t now;
+int sfd = -1;
 
 	/* first receive from the correct client and connect socket */
 	cli_addr_size = sizeof(cli_addr);
-	ret = recvfrom(listener->fd, buffer, sizeof(buffer), MSG_PEEK, (void*)&cli_addr, &cli_addr_size);
+	our_addr_size = sizeof(our_addr);
+	ret = oc_recvfrom_at(listener->fd, buffer, sizeof(buffer), 0,
+			  (struct sockaddr*)&cli_addr, &cli_addr_size,
+			  (struct sockaddr*)&our_addr, &our_addr_size,
+			  s->config->udp_port);
 	if (ret < 0) {
 		mslog(s, NULL, LOG_INFO, "error receiving in UDP socket");
 		return -1;
 	}
-	
 	buffer_size = ret;
-	
+
 	/* obtain the session id */
 	if (buffer_size < RECORD_PAYLOAD_POS+HANDSHAKE_SESSION_ID_POS+GNUTLS_MAX_SESSION_ID+2) {
 		mslog(s, NULL, LOG_INFO, "%s: too short UDP packet",
@@ -734,7 +736,7 @@ time_t now;
 	now = time(0);
 
 	if (match_ip_only == 0) {
-		proc_to_send = proc_search_sid(s, session_id, session_id_size);
+		proc_to_send = proc_search_dtls_id(s, session_id, session_id_size);
 	} else {
 		proc_to_send = proc_search_ip(s, &cli_addr, cli_addr_size);
 	}
@@ -748,7 +750,27 @@ time_t now;
 			goto fail;
 		}
 
-		ret = connect(listener->fd, (void*)&cli_addr, cli_addr_size);
+		sfd = socket(listener->family, SOCK_DGRAM, listener->protocol);
+		if (sfd < 0) {
+			e = errno;
+			mslog(s, proc_to_send, LOG_ERR, "new UDP socket failed: %s",
+			      strerror(e));
+			goto fail;
+		}
+
+		set_worker_udp_opts(sfd, listener->family);
+
+		if (our_addr_size > 0) {
+			ret = bind(sfd, (struct sockaddr *)&our_addr, our_addr_size);
+			if (ret == -1) {
+				e = errno;
+				mslog(s, proc_to_send, LOG_ERR, "bind UDP to %s: %s",
+				      human_addr((struct sockaddr*)&listener->addr, listener->addr_len, tbuf, sizeof(tbuf)),
+				      strerror(e));
+			}
+		}
+
+		ret = connect(sfd, (void*)&cli_addr, cli_addr_size);
 		if (ret == -1) {
 			e = errno;
 			mslog(s, proc_to_send, LOG_ERR, "connect UDP socket from %s: %s",
@@ -759,10 +781,14 @@ time_t now;
 
 		if (match_ip_only != 0) {
 			msg.hello = 0;
+		} else {
+			msg.has_data = 1;
 		}
+		msg.data.data = buffer;
+		msg.data.len = buffer_size;
 
 		ret = send_socket_msg_to_worker(s, proc_to_send, CMD_UDP_FD,
-			listener->fd,
+			sfd,
 			&msg, 
 			(pack_size_func)udp_fd_msg__get_packed_size,
 			(pack_func)udp_fd_msg__pack);
@@ -774,18 +800,11 @@ time_t now;
 		mslog(s, proc_to_send, LOG_DEBUG, "passed UDP socket from %s",
 		      human_addr((struct sockaddr*)&cli_addr, cli_addr_size, tbuf, sizeof(tbuf)));
 		proc_to_send->udp_fd_receive_time = now;
-		connected = 1;
-
-		reopen_udp_port(listener);
 	}
 
 fail:
-	if (connected == 0) {
-		/* received packet from unknown host. Ignore it. */
-		recv(listener->fd, buffer, buffer_size, 0);
-
-		return -1;
-	}
+	if (sfd != -1)
+		close(sfd);
 
 	return 0;
 
@@ -842,7 +861,6 @@ unsigned total = 10;
 		need_maintenance = 0;
 		mslog(s, NULL, LOG_DEBUG, "performing maintenance");
 		expire_tls_sessions(s);
-		expire_cookies(&s->cookies);
 		alarm(MAINTAINANCE_TIME(s));
 	}
 }
@@ -865,6 +883,8 @@ static int check_tcp_wrapper(int fd)
 # define check_tcp_wrapper(x) 0
 #endif
 
+typedef pid_t (*fork_func)(void);
+
 int main(int argc, char** argv)
 {
 	int fd, pid, e;
@@ -872,6 +892,7 @@ int main(int argc, char** argv)
 	struct proc_st *ctmp = NULL, *cpos;
 	fd_set rd_set, wr_set;
 	int n = 0, ret, flags;
+	char *p;
 #ifdef HAVE_PSELECT
 	struct timespec ts;
 #else
@@ -886,6 +907,7 @@ int main(int argc, char** argv)
 	sigset_t emptyset, blockset;
 	/* tls credentials */
 	struct tls_st creds;
+	fork_func our_fork = fork;
 
 #ifdef DEBUG_LEAKS
 	talloc_enable_leak_report_full();
@@ -912,7 +934,6 @@ int main(int argc, char** argv)
 	list_head_init(&s->proc_list.head);
 	list_head_init(&s->script_list.head);
 	tls_cache_init(s, &s->tls_db);
-	cookie_db_init(s, &s->cookies);
 	ip_lease_init(&s->ip_leases);
 	proc_table_init(s);
 
@@ -973,7 +994,7 @@ int main(int argc, char** argv)
 #ifdef HAVE_LIBWRAP
 	allow_severity = LOG_DAEMON|LOG_INFO;
 	deny_severity = LOG_DAEMON|LOG_WARNING;
-#endif	
+#endif
 
 	if (s->config->foreground == 0) {
 		if (daemon(0, 0) == -1) {
@@ -983,11 +1004,13 @@ int main(int argc, char** argv)
 		}
 	}
 
-	write_pid_file();
-	
-	run_sec_mod(s);
+	/* override the default fork function */
+	if (s->config->isolate)
+		our_fork = safe_fork;
 
-	sup_config_init(s);
+	write_pid_file();
+
+	run_sec_mod(s);
 
 	ret = ctl_handler_init(s);
 	if (ret < 0) {
@@ -999,15 +1022,23 @@ int main(int argc, char** argv)
 
 	/* chdir to our chroot directory, to allow opening the sec-mod
 	 * socket if necessary. */
-	if (s->config->chroot_dir)
-		chdir(s->config->chroot_dir);
+	if (s->config->chroot_dir) {
+		if (chdir(s->config->chroot_dir) != 0) {
+			e = errno;
+			mslog(s, NULL, LOG_ERR, "cannot chdir to %s: %s", s->config->chroot_dir, strerror(e));
+			exit(1);
+		}
+	}
 	ms_sleep(100); /* give some time for sec-mod to initialize */
 
 	/* Initialize certificates */
 	tls_load_certs(s, &creds);
 
 	s->secmod_addr.sun_family = AF_UNIX;
-	snprintf(s->secmod_addr.sun_path, sizeof(s->secmod_addr.sun_path), "%s", s->socket_file);
+	p = s->socket_file;
+	if (s->config->chroot_dir) /* if we are on chroot make the socket file path relative */
+		while (*p == '/') p++;
+	strlcpy(s->secmod_addr.sun_path, p, sizeof(s->secmod_addr.sun_path));
 	s->secmod_addr_len = SUN_LEN(&s->secmod_addr);
 
 	/* initialize memory for worker process */
@@ -1086,6 +1117,10 @@ int main(int argc, char** argv)
 					continue;
 				}
 				set_cloexec_flag (fd, 1);
+#ifndef __linux__
+				/* OpenBSD sets the non-blocking flag if accept's fd is non-blocking */
+				set_block(fd);
+#endif
 
 				if (s->config->max_clients > 0 && s->active_clients >= s->config->max_clients) {
 					close(fd);
@@ -1107,7 +1142,7 @@ int main(int argc, char** argv)
 					break;
 				}
 
-				pid = fork();
+				pid = our_fork();
 				if (pid == 0) {	/* child */
 					/* close any open descriptors, and erase
 					 * sensitive data before running the worker
@@ -1130,7 +1165,7 @@ int main(int argc, char** argv)
 					ws->config = s->config;
 					ws->cmd_fd = cmd_fd[1];
 					ws->tun_fd = -1;
-					ws->udp_fd = -1;
+					ws->dtls_tptr.fd = -1;
 					ws->conn_fd = fd;
 					ws->conn_type = stype;
 					ws->creds = &creds;
@@ -1153,6 +1188,7 @@ int main(int argc, char** argv)
 					exit(0);
 				} else if (pid == -1) {
 fork_failed:
+					mslog(s, NULL, LOG_ERR, "fork failed");
 					close(cmd_fd[0]);
 				} else { /* parent */
 					/* add_proc */

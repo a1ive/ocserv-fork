@@ -26,54 +26,18 @@ if [ $? != 0 ];then
 	exit 77
 fi
 
-if test -x /usr/bin/docker;then
-DOCKER=/usr/bin/docker
-else
-DOCKER=/usr/bin/docker.io
-fi
+CONFIG="tcp"
+IMAGE=ocserv-test1
+IMAGE_NAME=test_ocserv
+. ./docker-common.sh
 
-if ! test -x $DOCKER;then
-	echo "The docker program is needed to perform this test"
-	exit 77
-fi
-
-if ! test -f /etc/debian_version;then
-	echo "******************************************************"
-	echo "This test requires compiling ocserv in a Debian system"
-	echo "******************************************************"
-	exit 77
-fi
-
-stop() {
-	$DOCKER stop test_ocserv
-	$DOCKER rm test_ocserv
-	exit 1
-}
-
-$DOCKER pull tianon/debian:jessie
-if test $? != 0;then
-	echo "Cannot pull docker image"
-	exit 1
-fi
-
-cp ../src/ocserv ../src/ocpasswd ../src/occtl docker-ocserv/
-
-cp docker-ocserv/Dockerfile-tcp docker-ocserv/Dockerfile
-$DOCKER build -t ocserv-test1 docker-ocserv/
-if test $? != 0;then
-	echo "Cannot build docker image"
-	exit 1
-fi
-
-$DOCKER stop test_ocserv >/dev/null 2>&1
-$DOCKER rm test_ocserv >/dev/null 2>&1
-
-$DOCKER run -P --privileged=true -p 5000:5000/udp -p 5001:5001/udp -p 22 -p 5551:5551/udp --tty=false -d --name test_ocserv ocserv-test1
+$DOCKER run -P --privileged=true -p 5000:5000/udp -p 5001:5001/udp -p 22 -p 5551:5551/udp --tty=false -d --name test_ocserv $IMAGE
 if test $? != 0;then
 	echo "Cannot run docker image"
 	exit 1
 fi
 
+echo "ocserv image was run"
 #wait for ocserv to server
 sleep 5
 
@@ -82,9 +46,10 @@ if test -z "$IP";then
 	echo "Detected IP is null!"
 	stop
 fi
+echo "Detected IP: $IP"
 
 printf "test\ntest\n" >pass.tmp
-openconnect $IP:5551 -u test --passwd-on-stdin --servercert=d66b507ae074d03b02eafca40d35f87dd81049d3 < pass.tmp &
+openconnect $IP:5551 -u test --passwd-on-stdin -v --servercert=d66b507ae074d03b02eafca40d35f87dd81049d3 < pass.tmp &
 PID=$!
 
 rm -f pass.tmp
@@ -93,17 +58,24 @@ rm -f pass.tmp
 sleep 5
 
 # The client IP depends on the username so it shouldn't change.
-ping -w 5 192.168.1.190
+ping -w 5 192.168.1.1
 if test $? != 0;then
 	kill $PID
 	echo "Cannot ping ocserv"
 	stop
 fi
 
-ping -w 5 192.168.1.190 -s 1500
+ping -w 5 192.168.1.1 -s 1500
 if test $? != 0;then
 	kill $PID
 	echo "Cannot ping ocserv"
+	stop
+fi
+
+ping6 -w 5 fd91:6d87:7341:db6a::1
+if test $? != 0;then
+	kill $PID
+	echo "Cannot ping the IPv6 of ocserv"
 	stop
 fi
 
@@ -114,14 +86,14 @@ printf "echo root" >>echo-admin.tmp
 printf "\n" >>echo-admin.tmp
 chmod 755 echo-admin.tmp
 export SSH_ASKPASS="./echo-admin.tmp"
-setsid ssh -T -F config.tmp root@192.168.1.190 occtl show user test >out.tmp 2>&1
+setsid ssh -T -F config.tmp root@192.168.1.1 occtl show user test >out.tmp 2>&1
 cat out.tmp
 
 printf "#\!/bin/sh\n" >echo-admin.tmp
 printf "echo root" >>echo-admin.tmp
 printf "\n" >>echo-admin.tmp
 chmod 755 echo-admin.tmp
-setsid ssh -T -F config.tmp root@192.168.1.190 occtl show user test >out.tmp 2>&1
+setsid ssh -T -F config.tmp root@192.168.1.1 occtl show user test >out.tmp 2>&1
 cat out.tmp
 rm -f echo-admin.tmp
 rm -f config.tmp
@@ -138,20 +110,21 @@ rm -f out.tmp
 
 # There is an issue in nuttcp that makes it crash under docker if
 # /proc/sys/net/ipv4/tcp_adv_win_scale does not exist.
+if test "$FEDORA" = 1;then
+nuttcp -T 10 -t 192.168.1.1
+if test $? != 0;then
+	kill $PID
+	echo "Cannot send to ocserv"
+	stop
+fi
 
-#nuttcp -T 10 -t 192.168.1.190
-#if test $? != 0;then
-#	kill $PID
-#	echo "Cannot send to ocserv"
-#	stop
-#fi
-
-#nuttcp -T 10 -r 192.168.1.190
-#if test $? != 0;then
-#	kill $PID
-#	echo "Cannot recv from ocserv"
-#	stop
-#fi
+nuttcp -T 10 -r 192.168.1.1
+if test $? != 0;then
+	kill $PID
+	echo "Cannot recv from ocserv"
+	stop
+fi
+fi
 
 sleep 2
 

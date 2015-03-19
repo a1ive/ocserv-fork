@@ -92,7 +92,7 @@ int handle_status_cmd(dbus_ctx *ctx, const char *arg)
 	dbus_uint32_t sec_mod_pid;
 	dbus_uint32_t clients;
 
-	msg = send_dbus_cmd(ctx->conn, "org.infradead.ocserv",
+	msg = send_dbus_cmd(ctx, "org.infradead.ocserv",
 			    "/org/infradead/ocserv",
 			    "org.infradead.ocserv", "status", 0, NULL);
 	if (msg == NULL) {
@@ -164,7 +164,7 @@ int handle_reload_cmd(dbus_ctx *ctx, const char *arg)
 	DBusMessageIter args;
 	dbus_bool_t status;
 
-	msg = send_dbus_cmd(ctx->conn, "org.infradead.ocserv",
+	msg = send_dbus_cmd(ctx, "org.infradead.ocserv",
 			    "/org/infradead/ocserv",
 			    "org.infradead.ocserv", "reload", 0, NULL);
 	if (msg == NULL) {
@@ -214,7 +214,7 @@ int handle_stop_cmd(dbus_ctx *ctx, const char *arg)
 		return 1;
 	}
 
-	msg = send_dbus_cmd(ctx->conn, "org.infradead.ocserv",
+	msg = send_dbus_cmd(ctx, "org.infradead.ocserv",
 			    "/org/infradead/ocserv",
 			    "org.infradead.ocserv", "stop", 0, NULL);
 	if (msg == NULL) {
@@ -264,7 +264,7 @@ int handle_disconnect_user_cmd(dbus_ctx *ctx, const char *arg)
 		return 1;
 	}
 
-	msg = send_dbus_cmd(ctx->conn, "org.infradead.ocserv",
+	msg = send_dbus_cmd(ctx, "org.infradead.ocserv",
 			    "/org/infradead/ocserv",
 			    "org.infradead.ocserv",
 			    "disconnect_name", DBUS_TYPE_STRING, &arg);
@@ -313,7 +313,7 @@ int handle_disconnect_id_cmd(dbus_ctx *ctx, const char *arg)
 		return 1;
 	}
 
-	msg = send_dbus_cmd(ctx->conn, "org.infradead.ocserv",
+	msg = send_dbus_cmd(ctx, "org.infradead.ocserv",
 			    "/org/infradead/ocserv",
 			    "org.infradead.ocserv",
 			    "disconnect_id", DBUS_TYPE_UINT32, &id);
@@ -373,7 +373,7 @@ int handle_list_users_cmd(dbus_ctx *ctx, const char *arg)
 
 	out = pager_start();
 
-	msg = send_dbus_cmd(ctx->conn, "org.infradead.ocserv",
+	msg = send_dbus_cmd(ctx, "org.infradead.ocserv",
 			    "/org/infradead/ocserv",
 			    "org.infradead.ocserv", "list", 0, NULL);
 	if (msg == NULL) {
@@ -522,7 +522,8 @@ int handle_list_users_cmd(dbus_ctx *ctx, const char *arg)
 
 		print_time_ival7(t, out);
 		if (dtls_ciphersuite != NULL && dtls_ciphersuite[0] != 0) {
-			if (strncmp(dtls_ciphersuite, "(DTLS1.2)-(RSA)-", 16) == 0)
+			if (strlen(dtls_ciphersuite) > 16 && strncmp(dtls_ciphersuite, "(DTLS", 5) == 0 &&
+			    strncmp(&dtls_ciphersuite[8], ")-(RSA)-", 8) == 0)
 				dtls_ciphersuite += 16;
 			fprintf(out, " %14s %9s\n", dtls_ciphersuite, auth);
 		} else {
@@ -865,7 +866,7 @@ int handle_show_user_cmd(dbus_ctx *ctx, const char *arg)
 		return 1;
 	}
 
-	msg = send_dbus_cmd(ctx->conn, "org.infradead.ocserv",
+	msg = send_dbus_cmd(ctx, "org.infradead.ocserv",
 			    "/org/infradead/ocserv",
 			    "org.infradead.ocserv", "user_info2",
 			    DBUS_TYPE_STRING, &arg);
@@ -911,7 +912,7 @@ int handle_show_id_cmd(dbus_ctx *ctx, const char *arg)
 		return 1;
 	}
 
-	msg = send_dbus_cmd(ctx->conn, "org.infradead.ocserv",
+	msg = send_dbus_cmd(ctx, "org.infradead.ocserv",
 			    "/org/infradead/ocserv",
 			    "org.infradead.ocserv", "id_info2",
 			    DBUS_TYPE_UINT32, &id);

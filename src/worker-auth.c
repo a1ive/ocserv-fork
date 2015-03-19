@@ -168,7 +168,7 @@ int get_auth_handler2(worker_st * ws, unsigned http_ver, const char *pmsg)
 		ret =
 		    cstp_printf(ws,
 			       "Set-Cookie: webvpncontext=%s; Max-Age=%u; Secure\r\n",
-			       context, (unsigned)MAX_AUTH_SECS);
+			       context, (unsigned)ws->config->cookie_timeout);
 		if (ret < 0)
 			return -1;
 
@@ -490,14 +490,11 @@ static int recv_cookie_auth_reply(worker_st * ws)
 				goto cleanup;
 			}
 
-			snprintf(ws->vinfo.name, sizeof(ws->vinfo.name), "%s",
-				 msg->vname);
-			snprintf(ws->username, sizeof(ws->username), "%s",
-				 msg->user_name);
+			strlcpy(ws->vinfo.name, msg->vname, sizeof(ws->vinfo.name));
+			strlcpy(ws->username, msg->user_name, sizeof(ws->username));
 
 			if (msg->group_name != NULL) {
-				snprintf(ws->groupname, sizeof(ws->groupname), "%s",
-					 msg->group_name);
+				strlcpy(ws->groupname, msg->group_name, sizeof(ws->groupname));
 			} else {
 				ws->groupname[0] = 0;
 			}
@@ -548,12 +545,6 @@ static int recv_cookie_auth_reply(worker_st * ws)
 				    talloc_strdup(ws, msg->ipv4_netmask);
 			}
 
-			if (msg->ipv6_netmask != NULL) {
-				talloc_free(ws->config->network.ipv6_netmask);
-				ws->config->network.ipv6_netmask =
-				    talloc_strdup(ws, msg->ipv6_netmask);
-			}
-
 			if (msg->ipv4_network != NULL) {
 				talloc_free(ws->config->network.ipv4_network);
 				ws->config->network.ipv4_network =
@@ -566,7 +557,9 @@ static int recv_cookie_auth_reply(worker_st * ws)
 				    talloc_strdup(ws, msg->ipv6_network);
 			}
 
-			ws->config->network.ipv6_prefix = msg->ipv6_prefix;
+			if (msg->has_ipv6_prefix) {
+				ws->config->network.ipv6_prefix = msg->ipv6_prefix;
+			}
 
 			if (msg->has_rx_per_sec)
 				ws->config->rx_per_sec = msg->rx_per_sec;
@@ -609,6 +602,15 @@ static int recv_cookie_auth_reply(worker_st * ws)
 			if (check_if_default_route(ws->routes, ws->routes_size))
 				ws->default_route = 1;
 
+			ws->no_routes = talloc_size(ws, msg->n_no_routes*sizeof(char*));
+			if (ws->no_routes != NULL) {
+				ws->no_routes_size = msg->n_no_routes;
+				for (i = 0; i < ws->no_routes_size; i++) {
+					ws->no_routes[i] =
+					    talloc_strdup(ws, msg->no_routes[i]);
+				}
+			}
+
 			ws->dns = talloc_size(ws, msg->n_dns*sizeof(char*));
 			if (ws->dns != NULL) {
 				ws->dns_size = msg->n_dns;
@@ -647,7 +649,7 @@ static int recv_cookie_auth_reply(worker_st * ws)
 }
 
 /* returns the fd */
-static int connect_to_secmod(worker_st * ws)
+int connect_to_secmod(worker_st * ws)
 {
 	int sd, ret, e;
 
@@ -671,16 +673,6 @@ static int connect_to_secmod(worker_st * ws)
 		return -1;
 	}
 	return sd;
-}
-
-static
-int send_msg_to_secmod(worker_st * ws, int sd, uint8_t cmd,
-		       const void *msg, pack_size_func get_size, pack_func pack)
-{
-	oclog(ws, LOG_DEBUG, "sending message '%s' to secmod",
-	      cmd_request_to_str(cmd));
-
-	return send_msg(ws, sd, cmd, msg, get_size, pack);
 }
 
 static int recv_auth_reply(worker_st * ws, int sd, char *txt,
@@ -707,7 +699,7 @@ static int recv_auth_reply(worker_st * ws, int sd, char *txt,
 			return ERR_AUTH_FAIL;
 		}
 
-		snprintf(txt, max_txt_size, "%s", msg->msg);
+		strlcpy(txt, msg->msg, max_txt_size);
 		if (msg->has_sid && msg->sid.len == sizeof(ws->sid)) {
 			/* update our sid */
 			memcpy(ws->sid, msg->sid.data, sizeof(ws->sid));
@@ -722,8 +714,7 @@ static int recv_auth_reply(worker_st * ws, int sd, char *txt,
 			goto cleanup;
 		}
 
-		snprintf(ws->username, sizeof(ws->username), "%s",
-			 msg->user_name);
+		strlcpy(ws->username, msg->user_name, sizeof(ws->username));
 
 		if (msg->has_sid && msg->sid.len == sizeof(ws->sid)) {
 			/* update our sid */
@@ -992,7 +983,7 @@ int parse_reply(worker_st * ws, char *body, unsigned body_length,
 		*value =
 		    strcasestr(body, temp1);
 		if (*value == NULL) {
-			oclog(ws, LOG_DEBUG,
+			oclog(ws, LOG_HTTP_DEBUG,
 			      "cannot find '%s' in client XML message", field);
 			return -1;
 		}
@@ -1016,7 +1007,7 @@ int parse_reply(worker_st * ws, char *body, unsigned body_length,
 		*value =
 		    strcasestr(body, temp1);
 		if (*value == NULL) {
-			oclog(ws, LOG_DEBUG,
+			oclog(ws, LOG_HTTP_DEBUG,
 			      "cannot find '%s' in client message", field);
 			return -1;
 		}
@@ -1035,8 +1026,9 @@ int parse_reply(worker_st * ws, char *body, unsigned body_length,
 	}
 
 	if (len == 0) {
-		oclog(ws, LOG_DEBUG,
-		      "cannot parse '%s' in client XML message", field);
+		*value = talloc_strdup(ws->req.body, "");
+		if (*value != NULL)
+			return 0;
 		return -1;
 	}
 	if (xml)
@@ -1097,14 +1089,13 @@ int post_auth_handler(worker_st * ws, unsigned http_ver)
 		}
 
 		if (ret < 0) {
-			oclog(ws, LOG_DEBUG, "failed reading groupname");
+			oclog(ws, LOG_HTTP_DEBUG, "failed reading groupname");
 		} else {
 			if (ws->config->default_select_group != NULL &&
 				   strcmp(groupname, ws->config->default_select_group) == 0) {
 				def_group = 1;
 			} else {
-				snprintf(ws->groupname, sizeof(ws->groupname), "%s",
-				 	groupname);
+				strlcpy(ws->groupname, groupname, sizeof(ws->groupname));
 				ireq.group_name = ws->groupname;
 			}
 		}
@@ -1117,12 +1108,11 @@ int post_auth_handler(worker_st * ws, unsigned http_ver)
 					NULL, 0,
 					&username);
 			if (ret < 0) {
-				oclog(ws, LOG_DEBUG, "failed reading username");
+				oclog(ws, LOG_HTTP_DEBUG, "failed reading username");
 				goto ask_auth;
 			}
 
-			snprintf(ws->username, sizeof(ws->username), "%s",
-				 username);
+			strlcpy(ws->username, username, sizeof(ws->username));
 			talloc_free(username);
 			ireq.user_name = ws->username;
 		}
@@ -1146,7 +1136,7 @@ int post_auth_handler(worker_st * ws, unsigned http_ver)
 			}
 
 			if (def_group == 0 && ws->cert_groups_size > 0 && ws->groupname[0] == 0) {
-				oclog(ws, LOG_DEBUG, "user has not selected a group");
+				oclog(ws, LOG_HTTP_DEBUG, "user has not selected a group");
 				return get_auth_handler2(ws, http_ver, "Please select your group");
 			}
 
@@ -1251,7 +1241,7 @@ int post_auth_handler(worker_st * ws, unsigned http_ver)
 		goto auth_fail;
 	}
 
-	oclog(ws, LOG_DEBUG, "user '%s' obtained cookie", ws->username);
+	oclog(ws, LOG_HTTP_DEBUG, "user '%s' obtained cookie", ws->username);
 	ws->auth_state = S_AUTH_COOKIE;
 
 	return post_common_handler(ws, http_ver);

@@ -451,6 +451,8 @@ EOVERFLOW_HIDDEN = @EOVERFLOW_HIDDEN@
 EOVERFLOW_VALUE = @EOVERFLOW_VALUE@
 ERRNO_H = @ERRNO_H@
 EXEEXT = @EXEEXT@
+FREERADIUS_CLIENT_CFLAGS = @FREERADIUS_CLIENT_CFLAGS@
+FREERADIUS_CLIENT_LIBS = @FREERADIUS_CLIENT_LIBS@
 GNULIB_ATOLL = @GNULIB_ATOLL@
 GNULIB_CALLOC_POSIX = @GNULIB_CALLOC_POSIX@
 GNULIB_CANONICALIZE_FILE_NAME = @GNULIB_CANONICALIZE_FILE_NAME@
@@ -710,11 +712,12 @@ HAVE_GROUP_MEMBER = @HAVE_GROUP_MEMBER@
 HAVE_INTTYPES_H = @HAVE_INTTYPES_H@
 HAVE_LCHMOD = @HAVE_LCHMOD@
 HAVE_LCHOWN = @HAVE_LCHOWN@
+HAVE_LIBC = @HAVE_LIBC@
 HAVE_LIBCRYPT = @HAVE_LIBCRYPT@
 HAVE_LIBPROTOBUF_C = @HAVE_LIBPROTOBUF_C@
 HAVE_LIBREADLINE = @HAVE_LIBREADLINE@
 HAVE_LIBSECCOMP = @HAVE_LIBSECCOMP@
-HAVE_LIBSYSTEMD_DAEMON = @HAVE_LIBSYSTEMD_DAEMON@
+HAVE_LIBSYSTEMD = @HAVE_LIBSYSTEMD@
 HAVE_LIBTALLOC = @HAVE_LIBTALLOC@
 HAVE_LIBUTIL = @HAVE_LIBUTIL@
 HAVE_LIBWRAP = @HAVE_LIBWRAP@
@@ -812,14 +815,18 @@ INSTALL_PROGRAM = @INSTALL_PROGRAM@
 INSTALL_SCRIPT = @INSTALL_SCRIPT@
 INSTALL_STRIP_PROGRAM = @INSTALL_STRIP_PROGRAM@
 LDFLAGS = @LDFLAGS@
+LIBC = @LIBC@
 LIBCRYPT = @LIBCRYPT@
 LIBCRYPT_PREFIX = @LIBCRYPT_PREFIX@
+LIBC_PREFIX = @LIBC_PREFIX@
 LIBDBUS_CFLAGS = @LIBDBUS_CFLAGS@
 LIBDBUS_LIBS = @LIBDBUS_LIBS@
 LIBGNUTLS_CFLAGS = @LIBGNUTLS_CFLAGS@
 LIBGNUTLS_LIBS = @LIBGNUTLS_LIBS@
 LIBGNU_LIBDEPS = @LIBGNU_LIBDEPS@
 LIBGNU_LTLIBDEPS = @LIBGNU_LTLIBDEPS@
+LIBLZ4_CFLAGS = @LIBLZ4_CFLAGS@
+LIBLZ4_LIBS = @LIBLZ4_LIBS@
 LIBNL3_CFLAGS = @LIBNL3_CFLAGS@
 LIBNL3_LIBS = @LIBNL3_LIBS@
 LIBOBJS = @LIBOBJS@
@@ -837,8 +844,8 @@ LIBREADLINE_PREFIX = @LIBREADLINE_PREFIX@
 LIBS = @LIBS@
 LIBSECCOMP = @LIBSECCOMP@
 LIBSECCOMP_PREFIX = @LIBSECCOMP_PREFIX@
-LIBSYSTEMD_DAEMON = @LIBSYSTEMD_DAEMON@
-LIBSYSTEMD_DAEMON_PREFIX = @LIBSYSTEMD_DAEMON_PREFIX@
+LIBSYSTEMD = @LIBSYSTEMD@
+LIBSYSTEMD_PREFIX = @LIBSYSTEMD_PREFIX@
 LIBTALLOC = @LIBTALLOC@
 LIBTALLOC_CFLAGS = @LIBTALLOC_CFLAGS@
 LIBTALLOC_LIBS = @LIBTALLOC_LIBS@
@@ -847,12 +854,13 @@ LIBUTIL = @LIBUTIL@
 LIBUTIL_PREFIX = @LIBUTIL_PREFIX@
 LIBWRAP = @LIBWRAP@
 LIBWRAP_PREFIX = @LIBWRAP_PREFIX@
+LTLIBC = @LTLIBC@
 LTLIBCRYPT = @LTLIBCRYPT@
 LTLIBOBJS = @LTLIBOBJS@
 LTLIBPROTOBUF_C = @LTLIBPROTOBUF_C@
 LTLIBREADLINE = @LTLIBREADLINE@
 LTLIBSECCOMP = @LTLIBSECCOMP@
-LTLIBSYSTEMD_DAEMON = @LTLIBSYSTEMD_DAEMON@
+LTLIBSYSTEMD = @LTLIBSYSTEMD@
 LTLIBTALLOC = @LTLIBTALLOC@
 LTLIBUTIL = @LTLIBUTIL@
 LTLIBWRAP = @LTLIBWRAP@
@@ -1098,16 +1106,22 @@ EXTRA_DIST = ca-key.pem ca.pem common.sh server-cert.pem server-key.pem test1.co
 	user-config/test user-config-opt/test test-pass-script.config test-multi-cookie.config test-pam.config \
 	test-stress.config user-cert-wrong.pem connect-script test-group.passwd \
 	test-group-pass.config user-group-cert.pem user-group-key.pem test-user-group-cert.config \
-	test-user-group-cert-no-pass.config
+	test-user-group-cert-no-pass.config docker-common.sh test-cookie-timeout.config \
+	test-cookie-timeout-2.config user-config-explicit/test test-explicit-ip.config \
+	test-explicit-ip user-config-explicit/test2 user-config-explicit/test3 \
+	user-config-explicit/test4 test-pass-opt-cert.config
 
 SUBDIRS = docker-ocserv
 dist_check_SCRIPTS = test-pass test-pass-cert test-cert test-iroute test-pass-script \
 	test-multi-cookie test-pam test-stress full-test test-group-pass test-pass-group-cert \
-	ocpasswd-test test-pass-group-cert-no-pass unix-test test-pass-opt-cert
+	ocpasswd-test test-pass-group-cert-no-pass unix-test test-pass-opt-cert \
+	test-cookie-timeout test-cookie-timeout-2 radius-test test-explicit-ip \
+	radius-test
 
 TESTS = test-pass test-pass-cert test-cert test-iroute test-pass-script \
 	test-multi-cookie full-test test-group-pass test-pass-group-cert \
-	ocpasswd-test test-pass-group-cert-no-pass unix-test test-pass-opt-cert
+	ocpasswd-test test-pass-group-cert-no-pass unix-test test-pass-opt-cert \
+	test-cookie-timeout test-cookie-timeout-2 test-explicit-ip radius-test
 
 TESTS_ENVIRONMENT = srcdir="$(srcdir)" \
 	top_builddir="$(top_builddir)"
@@ -1474,6 +1488,34 @@ unix-test.log: unix-test
 test-pass-opt-cert.log: test-pass-opt-cert
 	@p='test-pass-opt-cert'; \
 	b='test-pass-opt-cert'; \
+	$(am__check_pre) $(LOG_DRIVER) --test-name "$$f" \
+	--log-file $$b.log --trs-file $$b.trs \
+	$(am__common_driver_flags) $(AM_LOG_DRIVER_FLAGS) $(LOG_DRIVER_FLAGS) -- $(LOG_COMPILE) \
+	"$$tst" $(AM_TESTS_FD_REDIRECT)
+test-cookie-timeout.log: test-cookie-timeout
+	@p='test-cookie-timeout'; \
+	b='test-cookie-timeout'; \
+	$(am__check_pre) $(LOG_DRIVER) --test-name "$$f" \
+	--log-file $$b.log --trs-file $$b.trs \
+	$(am__common_driver_flags) $(AM_LOG_DRIVER_FLAGS) $(LOG_DRIVER_FLAGS) -- $(LOG_COMPILE) \
+	"$$tst" $(AM_TESTS_FD_REDIRECT)
+test-cookie-timeout-2.log: test-cookie-timeout-2
+	@p='test-cookie-timeout-2'; \
+	b='test-cookie-timeout-2'; \
+	$(am__check_pre) $(LOG_DRIVER) --test-name "$$f" \
+	--log-file $$b.log --trs-file $$b.trs \
+	$(am__common_driver_flags) $(AM_LOG_DRIVER_FLAGS) $(LOG_DRIVER_FLAGS) -- $(LOG_COMPILE) \
+	"$$tst" $(AM_TESTS_FD_REDIRECT)
+test-explicit-ip.log: test-explicit-ip
+	@p='test-explicit-ip'; \
+	b='test-explicit-ip'; \
+	$(am__check_pre) $(LOG_DRIVER) --test-name "$$f" \
+	--log-file $$b.log --trs-file $$b.trs \
+	$(am__common_driver_flags) $(AM_LOG_DRIVER_FLAGS) $(LOG_DRIVER_FLAGS) -- $(LOG_COMPILE) \
+	"$$tst" $(AM_TESTS_FD_REDIRECT)
+radius-test.log: radius-test
+	@p='radius-test'; \
+	b='radius-test'; \
 	$(am__check_pre) $(LOG_DRIVER) --test-name "$$f" \
 	--log-file $$b.log --trs-file $$b.trs \
 	$(am__common_driver_flags) $(AM_LOG_DRIVER_FLAGS) $(LOG_DRIVER_FLAGS) -- $(LOG_COMPILE) \

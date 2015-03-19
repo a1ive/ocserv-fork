@@ -25,7 +25,10 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <net/if.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
 #include <sys/ioctl.h>
+#include <sys/uio.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -45,13 +48,17 @@
 #include <main.h>
 #include <ccan/list/list.h>
 
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__) || defined(__OpenBSD__)
 # include <net/if_var.h>
 # include <netinet/in_var.h>
+#endif
+#if defined(__OpenBSD__)
+# include <netinet6/in6_var.h>
 #endif
 
 #ifdef __linux__
 
+#include <net/route.h>
 #include <linux/types.h>
 
 struct in6_ifreq {
@@ -65,6 +72,7 @@ int set_ipv6_addr(main_server_st * s, struct proc_st *proc)
 {
 	int fd, e, ret;
 	struct in6_ifreq ifr6;
+	struct in6_rtmsg rt6;
 	struct ifreq ifr;
 	unsigned idx;
 
@@ -77,7 +85,7 @@ int set_ipv6_addr(main_server_st * s, struct proc_st *proc)
 	}
 
 	memset(&ifr, 0, sizeof(ifr));
-	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", proc->tun_lease.name);
+	strlcpy(ifr.ifr_name, proc->tun_lease.name, IFNAMSIZ);
 
 	ret = ioctl(fd, SIOGIFINDEX, &ifr);
 	if (ret != 0) {
@@ -94,7 +102,7 @@ int set_ipv6_addr(main_server_st * s, struct proc_st *proc)
 	memcpy(&ifr6.ifr6_addr, SA_IN6_P(&proc->ipv6->lip),
 	       SA_IN_SIZE(proc->ipv6->lip_len));
 	ifr6.ifr6_ifindex = idx;
-	ifr6.ifr6_prefixlen = 127;
+	ifr6.ifr6_prefixlen = 128;
 
 	ret = ioctl(fd, SIOCSIFADDR, &ifr6);
 	if (ret != 0) {
@@ -105,10 +113,27 @@ int set_ipv6_addr(main_server_st * s, struct proc_st *proc)
 		goto cleanup;
 	}
 
+	/* route to our remote address */
+	memset(&rt6, 0, sizeof(rt6));
+	memcpy(&rt6.rtmsg_dst, SA_IN6_P(&proc->ipv6->rip),
+	       SA_IN_SIZE(proc->ipv6->rip_len));
+	rt6.rtmsg_ifindex = idx;
+	rt6.rtmsg_dst_len = 128;
+	rt6.rtmsg_metric = 1;
+
+	ret = ioctl(fd, SIOCADDRT, &rt6);
+	if (ret != 0) {
+		e = errno;
+		mslog(s, NULL, LOG_ERR, "%s: Error setting route to remote IPv6: %s\n",
+		      proc->tun_lease.name, strerror(e));
+		ret = -1;
+		goto cleanup;
+	}
+
 	memset(&ifr, 0, sizeof(ifr));
 	ifr.ifr_addr.sa_family = AF_INET6;
 	ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
-	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", proc->tun_lease.name);
+	strlcpy(ifr.ifr_name, proc->tun_lease.name, IFNAMSIZ);
 
 	ret = ioctl(fd, SIOCSIFFLAGS, &ifr);
 	if (ret != 0) {
@@ -146,7 +171,7 @@ int set_ipv6_addr(main_server_st * s, struct proc_st *proc)
 	}
 
 	memset(&ifr6, 0, sizeof(ifr6));
-	snprintf(ifr6.ifra_name, IFNAMSIZ, "%s", proc->tun_lease.name);
+	strlcpy(ifr6.ifra_name, proc->tun_lease.name, IFNAMSIZ);
 
 	memcpy(&ifr6.ifra_addr.sin6_addr, SA_IN6_P(&proc->ipv6->lip),
 	       SA_IN_SIZE(proc->ipv6->lip_len));
@@ -177,7 +202,7 @@ int set_ipv6_addr(main_server_st * s, struct proc_st *proc)
 	memset(&ifr, 0, sizeof(ifr));
 	ifr.ifr_addr.sa_family = AF_INET6;
 	ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
-	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", proc->tun_lease.name);
+	strlcpy(ifr.ifr_name, proc->tun_lease.name, IFNAMSIZ);
 
 	ret = ioctl(fd, SIOCSIFFLAGS, &ifr);
 	if (ret != 0) {
@@ -221,7 +246,7 @@ static int set_network_info(main_server_st * s, struct proc_st *proc)
 			return -1;
 
 #ifdef SIOCAIFADDR
-		snprintf(ifr.ifra_name, IFNAMSIZ, "%s", proc->tun_lease.name);
+		strlcpy(ifr.ifra_name, proc->tun_lease.name, IFNAMSIZ);
 
 		memcpy(&ifr.ifra_addr, &proc->ipv4->lip, proc->ipv4->lip_len);
 		ifr.ifra_addr.sin_len = sizeof(struct sockaddr_in);
@@ -234,7 +259,6 @@ static int set_network_info(main_server_st * s, struct proc_st *proc)
 		ifr.ifra_mask.sin_len = sizeof(struct sockaddr_in);
 		ifr.ifra_mask.sin_family = AF_INET;
 		ifr.ifra_mask.sin_addr.s_addr = 0xffffffff;
-
 		ret = ioctl(fd, SIOCAIFADDR, &ifr);
 		if (ret != 0) {
 			e = errno;
@@ -244,7 +268,7 @@ static int set_network_info(main_server_st * s, struct proc_st *proc)
 			goto cleanup;
 		}
 #else
-		snprintf(ifr.ifr_name, IFNAMSIZ, "%s", proc->tun_lease.name);
+		strlcpy(ifr.ifr_name, proc->tun_lease.name, IFNAMSIZ);
 		memcpy(&ifr.ifr_addr, &proc->ipv4->lip, proc->ipv4->lip_len);
 		ifr.ifr_addr.sa_family = AF_INET;
 
@@ -259,7 +283,7 @@ static int set_network_info(main_server_st * s, struct proc_st *proc)
 
 		memset(&ifr, 0, sizeof(ifr));
 
-		snprintf(ifr.ifr_name, IFNAMSIZ, "%s", proc->tun_lease.name);
+		strlcpy(ifr.ifr_name, proc->tun_lease.name, IFNAMSIZ);
 		memcpy(&ifr.ifr_dstaddr, &proc->ipv4->rip, proc->ipv4->rip_len);
 		ifr.ifr_dstaddr.sa_family = AF_INET;
 
@@ -277,7 +301,7 @@ static int set_network_info(main_server_st * s, struct proc_st *proc)
 		memset(&ifr, 0, sizeof(ifr));
 		ifr.ifr_addr.sa_family = AF_INET;
 		ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
-		snprintf(ifr.ifr_name, IFNAMSIZ, "%s", proc->tun_lease.name);
+		strlcpy(ifr.ifr_name, proc->tun_lease.name, IFNAMSIZ);
 
 		ret = ioctl(fd, SIOCSIFFLAGS, &ifr);
 		if (ret != 0) {
@@ -317,6 +341,44 @@ static int set_network_info(main_server_st * s, struct proc_st *proc)
 }
 
 #include <ccan/hash/hash.h>
+
+#ifndef __linux__
+static int bsd_open_tun(void)
+{
+        int fd;
+        int s;
+	char tun_name[80];
+        struct ifreq ifr;
+	int unit_nr = 0;
+
+        fd = open("/dev/tun", O_RDWR);
+        if (fd == -1) {
+        	/* try iterating */
+		for (unit_nr = 0; unit_nr < 255; unit_nr++) {
+			snprintf(tun_name, sizeof(tun_name), "/dev/tun%d", unit_nr);
+			fd = open(tun_name, O_RDWR);
+# ifdef SIOCIFCREATE
+			if (fd == -1) {
+				/* cannot open tunXX, try creating it */
+		                s = socket(AF_INET, SOCK_DGRAM, 0);
+		                if (s < 0)
+		                        return -1;
+
+		                memset(&ifr, 0, sizeof(ifr));
+		                strncpy(ifr.ifr_name, tun_name + 5, sizeof(ifr.ifr_name) - 1);
+		                if (!ioctl(s, SIOCIFCREATE, &ifr))
+                		        fd = open(tun_name, O_RDWR);
+		                close(s);
+			}
+# endif
+			if (fd >= 0)
+				break;
+		}
+        }
+
+        return fd;
+}
+#endif
 
 int open_tun(main_server_st * s, struct proc_st *proc)
 {
@@ -391,7 +453,7 @@ int open_tun(main_server_st * s, struct proc_st *proc)
 	}
 #endif
 #else				/* freebsd */
-	tunfd = open("/dev/tun", O_RDWR);
+	tunfd = bsd_open_tun();
 	if (tunfd < 0) {
 		int e = errno;
 		mslog(s, NULL, LOG_ERR, "Can't open /dev/tun: %s\n",
@@ -410,8 +472,7 @@ int open_tun(main_server_st * s, struct proc_st *proc)
 			goto fail;
 		}
 
-		snprintf(proc->tun_lease.name, sizeof(proc->tun_lease.name),
-			 "%s", devname(st.st_rdev, S_IFCHR));
+		strlcpy(proc->tun_lease.name, devname(st.st_rdev, S_IFCHR), sizeof(proc->tun_lease.name));
 	}
 
 	set_cloexec_flag(tunfd, 1);
@@ -446,7 +507,7 @@ void close_tun(main_server_st * s, struct proc_st *proc)
 	}
 
 #ifdef SIOCIFDESTROY
-	int e;
+	int e, ret;
 	struct ifreq ifr;
 
 	if (proc->tun_lease.name[0] != 0) {
@@ -455,7 +516,7 @@ void close_tun(main_server_st * s, struct proc_st *proc)
 			return -1;
 
 		memset(&ifr, 0, sizeof(struct ifreq));
-		snprintf(ifr.ifr_name, IFNAMSIZ, "%s", proc->tun_lease.name);
+		strlcpy(ifr.ifr_name, proc->tun_lease.name, IFNAMSIZ);
 
 		ret = ioctl(fd, SIOCIFDESTROY, &ifr);
 		if (ret != 0) {
@@ -470,4 +531,65 @@ void close_tun(main_server_st * s, struct proc_st *proc)
 		close(fd);
 
 	return;
+}
+
+#if defined(__OpenBSD__) || defined(TUNSIFHEAD)
+# define TUN_AF_PREFIX 1
+#endif
+ssize_t tun_write(int sockfd, const void *buf, size_t len)
+{
+#ifdef TUN_AF_PREFIX
+	struct ip *iph = (void *)buf;
+	uint32_t head;
+	const uint8_t *data = buf;
+	static int complained = 0;
+	struct iovec iov[2];
+	int ret;
+
+	if (iph->ip_v == 6)
+		head = htonl(AF_INET6);
+	else if (iph->ip_v == 4)
+		head = htonl(AF_INET);
+	else {
+		if (!complained) {
+			complained = 1;
+			syslog(LOG_ERR, "tun_write: Unknown packet (len %d) received %02x %02x %02x %02x...\n",
+				(int)len, data[0], data[1], data[2], data[3]);
+		}
+		return -1;
+	}
+
+	iov[0].iov_base = &head;
+	iov[0].iov_len = sizeof(head);
+	iov[1].iov_base = (void*)buf;
+	iov[1].iov_len = len;
+
+	ret = writev(sockfd, iov, 2);
+	if (ret >= sizeof(uint32_t))
+		ret -= sizeof(uint32_t);
+	return ret;
+#else
+	return force_write(sockfd, buf, len);
+#endif
+}
+
+ssize_t tun_read(int sockfd, void *buf, size_t len)
+{
+#ifdef TUN_AF_PREFIX
+	uint32_t head;
+	struct iovec iov[2];
+	int ret;
+
+	iov[0].iov_base = &head;
+	iov[0].iov_len = sizeof(head);
+	iov[1].iov_base = buf;
+	iov[1].iov_len = len;
+
+	ret = readv(sockfd, iov, 2);
+	if (ret >= sizeof(uint32_t))
+		ret -= sizeof(uint32_t);
+	return ret;
+#else
+	return read(sockfd, buf, len);
+#endif
 }

@@ -1,3 +1,45 @@
+* Version 0.9.2 (released 2015-02-18)
+- Enable seccomp unconditionally for all platforms (libseccomp 2.2.0
+  is more portable).
+- Ensure that 'socket-file' is a relative path, so that is accessible
+  from both the main and worker processes.
+- Fixes in IP tun addresses assignment, and enhanced IP assigned address check.
+
+
+* Version 0.9.1 (released 2015-02-15)
+- Do not send IPv6 leases if the calculated MTU is lower than 1280.
+- Prevent the early expiry of sessions in security module; that
+  corrects session reconnections using the cookie.
+- Reduced debugging messages in debug level 1.
+- Allow forwarding empty passwords to auth backend.
+- depend on freeradius-client 1.1.7
+- fix seccomp filter in x86 systems.
+- Added per-user-configuration option explicit-ipv4, contributed
+  by Kevin Cerneke.
+- Added configuration option 'no-route' which corresponds to
+  X-CSTP-Split-Exclude.
+- Fixes in BSD systems support, contributed by Stuart Henderson.
+- Deprecated the certificate[optional] auth option.
+
+
+* Version 0.9.0 (released 2015-01-20)
+- Added native support for radius. That adds the new auth configuration
+  option "radius", which has as parameters the freeradius-client
+  configuration file and optionally the groupconfig option which
+  instructs to read configuration from radius; the stats-report-time
+  option enables interim-updates. That adds the dependency to
+  freeradius-client (see doc/README.radius).
+- Reply using the same address that received UDP packets are sent.
+- Simplify the input of IPv6 network addresses.
+- Use a separate IPC and PID namespace in Linux systems for worker
+  processes. That effectively puts each worker process in a separate
+  container. This can be enabled at compile time using --enable-linux-namespaces.
+- Configuration option 'use-seccomp' was replaced by 'isolate-workers',
+  which in addition to seccomp it enables the Linux namespaces restrictions.
+- Added support for stateless compression using LZ4 and LZS. This
+  is disabled by default. 
+
+
 * Version 0.8.9 (released 2014-12-10)
 - Added configuration option 'listen-host-is-dyndns'. That,
   if set, notifies the client with "X-CSTP-DynDNS: true", in

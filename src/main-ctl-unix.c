@@ -108,7 +108,7 @@ int ctl_handler_init(main_server_st * s)
 	mslog(s, NULL, LOG_DEBUG, "initializing control unix socket: %s", s->config->occtl_socket_file);
 	memset(&sa, 0, sizeof(sa));
 	sa.sun_family = AF_UNIX;
-	snprintf(sa.sun_path, sizeof(sa.sun_path), "%s", s->config->occtl_socket_file);
+	strlcpy(sa.sun_path, s->config->occtl_socket_file, sizeof(sa.sun_path));
 	remove(s->config->occtl_socket_file);
 
 	sd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -330,6 +330,13 @@ static int append_user_info(method_ctx *ctx,
 	rep->tls_ciphersuite = ctmp->tls_ciphersuite;
 	rep->dtls_ciphersuite = ctmp->dtls_ciphersuite;
 
+	rep->cstp_compr = ctmp->cstp_compr;
+	rep->dtls_compr = ctmp->dtls_compr;
+	if (ctmp->mtu > 0) {
+		rep->mtu = ctmp->mtu;
+		rep->has_mtu = 1;
+	}
+
 	if (single > 0) {
 		if (ctmp->config.rx_per_sec > 0)
 			tmp = ctmp->config.rx_per_sec;
@@ -367,6 +374,14 @@ static int append_user_info(method_ctx *ctx,
 		} else {
 			rep->routes = ctx->s->config->network.routes;
 			rep->n_routes = ctx->s->config->network.routes_size;
+		}
+
+		if (ctmp->config.no_routes_size > 0) {
+			rep->no_routes = ctmp->config.no_routes;
+			rep->n_no_routes = ctmp->config.no_routes_size;
+		} else {
+			rep->no_routes = ctx->s->config->network.no_routes;
+			rep->n_no_routes = ctx->s->config->network.no_routes_size;
 		}
 
 		if (ctmp->config.iroutes_size > 0) {
@@ -610,7 +625,7 @@ static void ctl_handle_commands(main_server_st * s)
 		goto cleanup;
 	}
 
-	ret = check_upeer_id("ctl", cfd, 0, 0, NULL);
+	ret = check_upeer_id("ctl", s->config->debug, cfd, 0, 0, NULL);
 	if (ret < 0) {
 		mslog(s, NULL, LOG_ERR, "ctl: unauthorized connection");
 		goto cleanup;
