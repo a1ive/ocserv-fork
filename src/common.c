@@ -28,6 +28,8 @@
 /* for recvmsg */
 #include <netinet/in.h>
 #include <netinet/ip.h>
+/* for inet_ntop */
+#include <arpa/inet.h>
 
 #include "common.h"
 
@@ -57,11 +59,15 @@ static char tmp[32];
 		return "terminate";
 	case CMD_SESSION_INFO:
 		return "session info";
-	case CMD_CLI_STATS:
-		return "cli stats";
+	case CMD_BAN_IP:
+		return "ban IP";
+	case CMD_BAN_IP_REPLY:
+		return "ban IP reply";
 
 	case SM_CMD_CLI_STATS:
 		return "sm: cli stats";
+	case SM_CMD_AUTH_CLI_STATS:
+		return "sm: auth cli stats";
 	case SM_CMD_AUTH_INIT:
 		return "sm: auth init";
 	case SM_CMD_AUTH_CONT:
@@ -76,6 +82,10 @@ static char tmp[32];
 		return "sm: session close";
 	case SM_CMD_AUTH_SESSION_OPEN:
 		return "sm: session open";
+	case SM_CMD_AUTH_BAN_IP:
+		return "sm: ban IP";
+	case SM_CMD_AUTH_BAN_IP_REPLY:
+		return "sm: ban IP reply";
 	default:
 		snprintf(tmp, sizeof(tmp), "unknown (%u)", _cmd);
 		return tmp;
@@ -117,6 +127,9 @@ uint8_t * p = buf;
 		if (ret == -1) {
 			if (errno != EAGAIN && errno != EINTR)
 				return ret;
+		} else if (ret == 0 && left != 0) {
+			errno = ENOENT;
+			return -1;
 		}
 
 		if (ret > 0) {
@@ -136,19 +149,22 @@ uint8_t * p = buf;
 struct timeval tv;
 fd_set set;
 
-	tv.tv_sec = sec;
-	tv.tv_usec = 0;
-
-	FD_ZERO(&set);
-	FD_SET(sockfd, &set);
-
 	while(left > 0) {
-		ret = select(sockfd + 1, &set, NULL, NULL, &tv);
-		if (ret == -1 && errno == EINTR)
-			continue;
-		if (ret == -1 || ret == 0) {
-			errno = ETIMEDOUT;
-			return -1;
+		if (sec > 0) {
+			tv.tv_sec = sec;
+			tv.tv_usec = 0;
+
+			FD_ZERO(&set);
+			FD_SET(sockfd, &set);
+
+			do {
+				ret = select(sockfd + 1, &set, NULL, NULL, &tv);
+			} while (ret == -1 && errno == EINTR);
+
+			if (ret == -1 || ret == 0) {
+				errno = ETIMEDOUT;
+				return -1;
+			}
 		}
 
 		ret = read(sockfd, p, left);
@@ -209,6 +225,36 @@ fd_set set;
 	return recv(sockfd, buf, len, 0);
 }
 
+ssize_t recvmsg_timeout(int sockfd, struct msghdr *msg, int flags, unsigned sec)
+{
+int ret;
+struct timeval tv;
+fd_set set;
+
+	if (sec) {
+		tv.tv_sec = sec;
+		tv.tv_usec = 0;
+
+		FD_ZERO(&set);
+		FD_SET(sockfd, &set);
+
+		do {
+			ret = select(sockfd + 1, &set, NULL, NULL, &tv);
+		} while (ret == -1 && errno == EINTR);
+
+		if (ret == -1 || ret == 0) {
+			errno = ETIMEDOUT;
+			return -1;
+		}
+	}
+
+	do {
+		ret = recvmsg(sockfd, msg, flags);
+	} while (ret == -1 && errno == EINTR);
+
+	return ret;
+}
+
 int ip_cmp(const struct sockaddr_storage *s1, const struct sockaddr_storage *s2)
 {
 	if (((struct sockaddr*)s1)->sa_family == AF_INET) {
@@ -222,28 +268,40 @@ int ip_cmp(const struct sockaddr_storage *s1, const struct sockaddr_storage *s2)
  */
 char* ipv4_prefix_to_mask(void *pool, unsigned prefix)
 {
-	switch (prefix) {
-		case 8:
-			return talloc_strdup(pool, "255.0.0.0");
-		case 16:
-			return talloc_strdup(pool, "255.255.0.0");
-		case 24:
-			return talloc_strdup(pool, "255.255.255.0");
-		case 25:
-			return talloc_strdup(pool, "255.255.255.128");
-		case 26:
-			return talloc_strdup(pool, "255.255.255.192");
-		case 27:
-			return talloc_strdup(pool, "255.255.255.224");
-		case 28:
-			return talloc_strdup(pool, "255.255.255.240");
-		case 29:
-			return talloc_strdup(pool, "255.255.255.248");
-		case 30:
-			return talloc_strdup(pool, "255.255.255.252");
-		default:
-			return NULL;
+	struct in_addr in;
+	char str[MAX_IP_STR];
+
+	if (prefix == 0 || prefix > 32)
+		return NULL;
+
+	in.s_addr = ntohl(((uint32_t)0xFFFFFFFF) << (32 - prefix));
+	if (inet_ntop(AF_INET, &in, str, sizeof(str)) == NULL)
+		return NULL;
+
+	return talloc_strdup(pool, str);
+}
+
+char* ipv6_prefix_to_mask(char buf[MAX_IP_STR], unsigned prefix)
+{
+	struct in6_addr in6;
+	int i, j;
+
+	if (prefix == 0 || prefix > 128)
+		return NULL;
+
+	memset(&in6, 0x0, sizeof(in6));
+	for (i = prefix, j = 0; i > 0; i -= 8, j++) {
+		if (i >= 8) {
+			in6.s6_addr[j] = 0xff;
+		} else {
+			in6.s6_addr[j] = (unsigned long)(0xffU << ( 8 - i ));
+		}
 	}
+
+	if (inet_ntop(AF_INET6, &in6, buf, MAX_IP_STR) == NULL)
+		return NULL;
+
+	return buf;
 }
 
 /* Sends message + socketfd */
@@ -306,7 +364,9 @@ int send_socket_msg(void *pool, int fd, uint8_t cmd,
 		memcpy(CMSG_DATA(cmptr), &socketfd, sizeof(int));
 	}
 
-	ret = sendmsg(fd, &hdr, 0);
+	do {
+		ret = sendmsg(fd, &hdr, 0);
+	} while(ret == -1 && errno == EINTR);
 	if (ret < 0) {
 		int e = errno;
 		syslog(LOG_ERR, "%s:%u: %s", __FILE__, __LINE__, strerror(e));
@@ -325,7 +385,8 @@ int send_msg(void *pool, int fd, uint8_t cmd,
 }
 
 int recv_socket_msg(void *pool, int fd, uint8_t cmd, 
-		     int* socketfd, void** msg, unpack_func unpack)
+		     int* socketfd, void** msg, unpack_func unpack,
+		     unsigned timeout)
 {
 	struct iovec iov[3];
 	uint16_t length;
@@ -353,10 +414,7 @@ int recv_socket_msg(void *pool, int fd, uint8_t cmd,
 	hdr.msg_control = control_un.control;
 	hdr.msg_controllen = sizeof(control_un.control);
 
-	/* FIXME: Add a timeout here */
-	do {
-		ret = recvmsg(fd, &hdr, 0);
-	} while (ret == -1 && errno == EINTR);
+	ret = recvmsg_timeout(fd, &hdr, 0, timeout);
 	if (ret == -1) {
 		int e = errno;
 		syslog(LOG_ERR, "%s:%u: recvmsg: %s", __FILE__, __LINE__, strerror(e));
@@ -369,6 +427,7 @@ int recv_socket_msg(void *pool, int fd, uint8_t cmd,
 	}
 
 	if (rcmd != cmd) {
+		syslog(LOG_ERR, "%s:%u: expected %d, received %d", __FILE__, __LINE__, (int)rcmd, (int)cmd);
 		return ERR_BAD_COMMAND;
 	}
 
@@ -393,7 +452,7 @@ int recv_socket_msg(void *pool, int fd, uint8_t cmd,
 			goto cleanup;
 		}
 
-		ret = force_read(fd, data, length);
+		ret = force_read_timeout(fd, data, length, timeout);
 		if (ret < length) {
 			int e = errno;
 			syslog(LOG_ERR, "%s:%u: recvmsg: %s", __FILE__, __LINE__, strerror(e));
@@ -419,9 +478,9 @@ cleanup:
 }
 
 int recv_msg(void *pool, int fd, uint8_t cmd, 
-		void** msg, unpack_func unpack)
+		void** msg, unpack_func unpack, unsigned timeout)
 {
-	return recv_socket_msg(pool, fd, cmd, NULL, msg, unpack);
+	return recv_socket_msg(pool, fd, cmd, NULL, msg, unpack, timeout);
 }
 
 void _talloc_free2(void *ctx, void *ptr)
@@ -457,7 +516,9 @@ struct msghdr mh = {
 	.msg_controllen = sizeof(cmbuf),
 };
 
-	ret = recvmsg(sockfd, &mh, 0);
+	do {
+		ret = recvmsg(sockfd, &mh, 0);
+	} while (ret == -1 && errno == EINTR);
 	if (ret < 0) {
 		return -1;
 	}
@@ -466,7 +527,7 @@ struct msghdr mh = {
 	for (cmsg = CMSG_FIRSTHDR(&mh); cmsg != NULL; cmsg = CMSG_NXTHDR(&mh, cmsg)) {
 #if defined(IP_PKTINFO)
 		if (cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_PKTINFO) {
-			struct in_pktinfo *pi = CMSG_DATA(cmsg);
+			struct in_pktinfo *pi = (void*)CMSG_DATA(cmsg);
 			struct sockaddr_in *a = (struct sockaddr_in*)our_addr;
 
 			if (*our_addrlen < sizeof(struct sockaddr_in))
@@ -480,7 +541,7 @@ struct msghdr mh = {
 		}
 #elif defined(IP_RECVDSTADDR)
 		if (cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_RECVDSTADDR) {
-			struct in_addr *pi = CMSG_DATA(cmsg);
+			struct in_addr *pi = (void*)CMSG_DATA(cmsg);
 			struct sockaddr_in *a = (struct sockaddr_in*)our_addr;
 
 			if (*our_addrlen < sizeof(struct sockaddr_in))
@@ -494,8 +555,8 @@ struct msghdr mh = {
 		}
 #endif
 #ifdef IPV6_RECVPKTINFO
-		if (cmsg->cmsg_level != IPPROTO_IPV6 || cmsg->cmsg_type != IPV6_RECVPKTINFO) {
-			struct in6_pktinfo *pi = CMSG_DATA(cmsg);
+		if (cmsg->cmsg_level == IPPROTO_IPV6 && cmsg->cmsg_type == IPV6_PKTINFO) {
+			struct in6_pktinfo *pi = (void*)CMSG_DATA(cmsg);
 			struct sockaddr_in6 *a = (struct sockaddr_in6*)our_addr;
 
 			if (*our_addrlen < sizeof(struct sockaddr_in6))

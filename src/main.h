@@ -40,9 +40,9 @@
 #define COOKIE_KEY_SIZE 16
 
 extern sigset_t sig_default_set;
-int cmd_parser (void *pool, int argc, char **argv, struct cfg_st** config);
-void reload_cfg_file(void *pool, struct cfg_st* config);
-void clear_cfg_file(struct cfg_st* config);
+int cmd_parser (void *pool, int argc, char **argv, struct perm_cfg_st** config);
+void reload_cfg_file(void *pool, struct perm_cfg_st* config);
+void clear_cfg(struct perm_cfg_st* config);
 void write_pid_file(void);
 void remove_pid_file(void);
 
@@ -77,7 +77,8 @@ enum {
 	PS_AUTH_INACTIVE, /* no comm with worker */
 	PS_AUTH_FAILED, /* no tried authenticated but failed */
 	PS_AUTH_INIT, /* worker has sent an auth init msg */
-	PS_AUTH_COMPLETED, /* successful authentication */
+	PS_AUTH_CONT, /* worker has sent an auth cont msg */
+	PS_AUTH_COMPLETED /* successful authentication */
 };
 
 /* Each worker process maps to a unique proc_st structure.
@@ -154,18 +155,6 @@ struct script_list_st {
 	struct list_head head;
 };
 
-struct banned_st {
-	struct list_node list;
-	time_t failed_time;	/* The time authentication failed */
-	struct sockaddr_storage addr; /* local socket address */
-	socklen_t addr_len;
-};
-
-struct cookie_entry_db_st {
-	struct htable *db;
-	unsigned total;
-};
-
 struct proc_hash_db_st {
 	struct htable *db_ip;
 	struct htable *db_dtls_id;
@@ -174,12 +163,14 @@ struct proc_hash_db_st {
 };
 
 typedef struct main_server_st {
-	struct cfg_st *config;
+	struct cfg_st *config; /* pointer inside perm_config */
+	struct perm_cfg_st *perm_config;
 	
 	struct ip_lease_db_st ip_leases;
-	struct cookie_entry_db_st cookies;
 
 	tls_sess_db_st tls_db;
+	struct htable *ban_db;
+
 	tls_st *creds;
 	
 	uint8_t cookie_key[COOKIE_KEY_SIZE];
@@ -198,6 +189,9 @@ typedef struct main_server_st {
 	unsigned secmod_addr_len;
 	
 	unsigned active_clients;
+	/* updated on the cli_stats_msg from sec-mod. 
+	 * Holds the number of entries in secmod list of users */
+	unsigned secmod_client_entries;
 	time_t start_time;
 
 	void * auth_extra;
@@ -207,12 +201,15 @@ typedef struct main_server_st {
 #else
 	int ctl_fd;
 #endif
+	int sec_mod_fd; /* messages are sent and received async */
+	int sec_mod_fd_sync; /* messages are send in a sync order (ping-pong). Only main sends. */
 	void *main_pool; /* talloc main pool */
 } main_server_st;
 
 void clear_lists(main_server_st *s);
 
 int handle_commands(main_server_st *s, struct proc_st* cur);
+int handle_sec_mod_commands(main_server_st *s);
 
 int user_connected(main_server_st *s, struct proc_st* cur);
 void user_disconnected(main_server_st *s, struct proc_st* cur);
@@ -252,6 +249,7 @@ void  mslog_hex(const main_server_st * s, const struct proc_st* proc,
 
 int open_tun(main_server_st* s, struct proc_st* proc);
 void close_tun(main_server_st* s, struct proc_st* proc);
+void reset_tun(struct proc_st* proc);
 int set_tun_mtu(main_server_st* s, struct proc_st * proc, unsigned mtu);
 
 int send_cookie_auth_reply(main_server_st* s, struct proc_st* proc,
@@ -263,12 +261,18 @@ int handle_auth_cookie_req(main_server_st* s, struct proc_st* proc,
 int check_multiple_users(main_server_st *s, struct proc_st* proc);
 int handle_script_exit(main_server_st *s, struct proc_st* proc, int code);
 
-void run_sec_mod(main_server_st * s);
+int run_sec_mod(main_server_st * s, int *sync_fd);
 
 struct proc_st *new_proc(main_server_st * s, pid_t pid, int cmd_fd,
 			struct sockaddr_storage *remote_addr, socklen_t remote_addr_len,
 			uint8_t *sid, size_t sid_size);
-void remove_proc(main_server_st* s, struct proc_st *proc, unsigned k);
+
+/* kill the pid */
+#define RPROC_KILL 1
+/* we are on shutdown, don't wait for anything */
+#define RPROC_QUIT (1<<1)
+
+void remove_proc(main_server_st* s, struct proc_st *proc, unsigned flags);
 void proc_to_zombie(main_server_st* s, struct proc_st *proc);
 
 void put_into_cgroup(main_server_st * s, const char* cgroup, pid_t pid);
@@ -293,5 +297,6 @@ void request_reload(int signo);
 void request_stop(int signo);
 
 const struct auth_mod_st *get_auth_mod(void);
+const struct auth_mod_st *get_backup_auth_mod(void);
 
 #endif

@@ -205,7 +205,6 @@ CPPFLAGS = @CPPFLAGS@
 CSCOPE = @CSCOPE@
 CTAGS = @CTAGS@
 CYGPATH_W = @CYGPATH_W@
-DBUS_CONFIG_DIR = @DBUS_CONFIG_DIR@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
 ECHO_C = @ECHO_C@
@@ -220,8 +219,6 @@ EOVERFLOW_HIDDEN = @EOVERFLOW_HIDDEN@
 EOVERFLOW_VALUE = @EOVERFLOW_VALUE@
 ERRNO_H = @ERRNO_H@
 EXEEXT = @EXEEXT@
-FREERADIUS_CLIENT_CFLAGS = @FREERADIUS_CLIENT_CFLAGS@
-FREERADIUS_CLIENT_LIBS = @FREERADIUS_CLIENT_LIBS@
 GNULIB_ATOLL = @GNULIB_ATOLL@
 GNULIB_CALLOC_POSIX = @GNULIB_CALLOC_POSIX@
 GNULIB_CANONICALIZE_FILE_NAME = @GNULIB_CANONICALIZE_FILE_NAME@
@@ -588,12 +585,12 @@ LIBC = @LIBC@
 LIBCRYPT = @LIBCRYPT@
 LIBCRYPT_PREFIX = @LIBCRYPT_PREFIX@
 LIBC_PREFIX = @LIBC_PREFIX@
-LIBDBUS_CFLAGS = @LIBDBUS_CFLAGS@
-LIBDBUS_LIBS = @LIBDBUS_LIBS@
 LIBGNUTLS_CFLAGS = @LIBGNUTLS_CFLAGS@
 LIBGNUTLS_LIBS = @LIBGNUTLS_LIBS@
 LIBGNU_LIBDEPS = @LIBGNU_LIBDEPS@
 LIBGNU_LTLIBDEPS = @LIBGNU_LTLIBDEPS@
+LIBKRB5_CFLAGS = @LIBKRB5_CFLAGS@
+LIBKRB5_LIBS = @LIBKRB5_LIBS@
 LIBLZ4_CFLAGS = @LIBLZ4_CFLAGS@
 LIBLZ4_LIBS = @LIBLZ4_LIBS@
 LIBNL3_CFLAGS = @LIBNL3_CFLAGS@
@@ -619,6 +616,8 @@ LIBTALLOC = @LIBTALLOC@
 LIBTALLOC_CFLAGS = @LIBTALLOC_CFLAGS@
 LIBTALLOC_LIBS = @LIBTALLOC_LIBS@
 LIBTALLOC_PREFIX = @LIBTALLOC_PREFIX@
+LIBTASN1_CFLAGS = @LIBTASN1_CFLAGS@
+LIBTASN1_LIBS = @LIBTASN1_LIBS@
 LIBUTIL = @LIBUTIL@
 LIBUTIL_PREFIX = @LIBUTIL_PREFIX@
 LIBWRAP = @LIBWRAP@
@@ -682,6 +681,8 @@ PRAGMA_COLUMNS = @PRAGMA_COLUMNS@
 PRAGMA_SYSTEM_HEADER = @PRAGMA_SYSTEM_HEADER@
 PTHREAD_H_DEFINES_STRUCT_TIMESPEC = @PTHREAD_H_DEFINES_STRUCT_TIMESPEC@
 PTRDIFF_T_SUFFIX = @PTRDIFF_T_SUFFIX@
+RADCLI_CFLAGS = @RADCLI_CFLAGS@
+RADCLI_LIBS = @RADCLI_LIBS@
 RANLIB = @RANLIB@
 REPLACE_CALLOC = @REPLACE_CALLOC@
 REPLACE_CANONICALIZE_FILE_NAME = @REPLACE_CANONICALIZE_FILE_NAME@
@@ -873,7 +874,7 @@ top_srcdir = @top_srcdir@
 EXTRA_DIST = design.dia sample.config scripts/ocserv-script sample.passwd \
 	systemd/socket-activated/ocserv.service  systemd/standalone/ocserv.service \
 	systemd/socket-activated/ocserv.socket README.radius \
-	dbus/org.infradead.ocserv.conf profile.xml
+	profile.xml
 
 dist_man_MANS = ocserv.8 ocpasswd.8 occtl.8
 all: all-am
@@ -1123,11 +1124,6 @@ ocpasswd.8: ../src/ocpasswd-args.def
 	-sed 's/@subheading \(.*\)/@*\n@var{\1}\n@*/' $< > "$<".tmp && \
 	@AUTOGEN@ -L../src -DMAN_SECTION=8 -Tagman-cmd.tpl "$<".tmp && \
 	rm -f "$<".tmp
-
-# Do not install D-BUS or systemd files.
-#install-data-local:
-#	-test -d "/usr/lib/systemd/system/" && ! test -f /usr/lib/systemd/system/ocserv.service && $(INSTALL_DATA) systemd/standalone/ocserv.service /usr/lib/systemd/system/
-#	-test -d "$(DBUS_CONFIG_DIR)" && ! test -f $(DBUS_CONFIG_DIR)/org.infradead.ocserv.conf && $(INSTALL_DATA) dbus/org.infradead.ocserv.conf $(DBUS_CONFIG_DIR)
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

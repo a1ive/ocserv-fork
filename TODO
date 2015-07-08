@@ -1,10 +1,7 @@
 Short term items:
 
-* Separate accounting from authentication. I.e., allow a client which
-  is authenticated with certificates to report stats using radius.
-
-* Move the banned list into the main process. That would allow faster
-  rejection of banned clients.
+* Modify the test suite to be able to run without root privileges. That
+  could be done by using virt-builder for the tests instead of docker.
 
 * Use the UDP address to report the client's IP when sniproxy or haproxy
   are being used.
@@ -18,6 +15,8 @@ Short term items:
 * Give each worker a limited number of accesses to the security module.
 
 Long term items:
+
+* radius: Consider supporting rfc5176.
 
 * Think how the DTLS part can use better negotiation of algorithms and DTLS
   is negotiated properly. Using PSK ciphersuites seem to be like a solution, 
